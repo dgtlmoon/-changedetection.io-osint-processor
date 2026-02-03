@@ -192,10 +192,20 @@ class perform_site_check(text_json_diff_processor):
             if scan_mode == "parallel":
                 logger.info("Starting PARALLEL reconnaissance scans...")
 
-                # Build list of enabled scans
-                scans = []
+                # DNS must run first if SMTP is enabled (needs MX records)
+                # Run DNS first, then everything else in parallel
                 if enable_dns:
-                    scans.append(dns_step.scan_dns(hostname, dns_resolver, watch_uuid, update_signal))
+                    dns_results = await dns_step.scan_dns(hostname, dns_resolver, watch_uuid, update_signal)
+                else:
+                    dns_results = None
+
+                # Get MX records for SMTP scanning
+                mx_records = []
+                if dns_results and isinstance(dns_results, dict):
+                    mx_records = dns_results.get('MX', [])
+
+                # Build list of remaining scans to run in parallel
+                scans = []
                 if enable_whois:
                     scans.append(whois_lookup.scan_whois(hostname, watch_uuid, update_signal))
                 if enable_http:
@@ -219,19 +229,18 @@ class perform_site_check(text_json_diff_processor):
                 if enable_ssh:
                     scans.append(ssh_fingerprint.scan_ssh(hostname, 22, 5, watch_uuid, update_signal))
                 if enable_smtp:
-                    scans.append(smtp_fingerprint.scan_smtp(hostname, [25, 587, 465], 5, watch_uuid, update_signal))
+                    scans.append(smtp_fingerprint.scan_smtp_mx_records(mx_records, dns_resolver, [25, 587, 465], 5, watch_uuid, update_signal))
 
                 # MAC address lookup (always enabled for local network detection)
                 scans.append(mac_lookup.scan_mac(ip_address, watch_uuid, update_signal))
 
-                # Launch all enabled scans concurrently
+                # Launch all remaining scans concurrently
                 if scans:
                     results = await asyncio.gather(*scans, return_exceptions=True)
 
                     # Unpack results based on which scans were enabled
+                    # Note: dns_results already populated above
                     idx = 0
-                    dns_results = results[idx] if enable_dns else None
-                    idx += 1 if enable_dns else 0
                     whois_data = results[idx] if enable_whois else None
                     idx += 1 if enable_whois else 0
                     http_fingerprint_data = results[idx] if enable_http else None
@@ -267,6 +276,11 @@ class perform_site_check(text_json_diff_processor):
                 # Run each enabled step sequentially
                 dns_results = await dns_step.scan_dns(hostname, dns_resolver, watch_uuid, update_signal) if enable_dns else None
 
+                # Get MX records for SMTP scanning
+                mx_records = []
+                if dns_results and isinstance(dns_results, dict):
+                    mx_records = dns_results.get('MX', [])
+
                 whois_data = await whois_lookup.scan_whois(hostname, watch_uuid, update_signal) if enable_whois else None
 
                 http_fingerprint_data = await http_fingerprint.scan_http(url, dns_resolver, proxy_url, watch_uuid, update_signal) if enable_http else None
@@ -290,7 +304,7 @@ class perform_site_check(text_json_diff_processor):
 
                 ssh_data = await ssh_fingerprint.scan_ssh(hostname, 22, 5, watch_uuid, update_signal) if enable_ssh else None
 
-                smtp_data = await smtp_fingerprint.scan_smtp(hostname, [25, 587, 465], 5, watch_uuid, update_signal) if enable_smtp else None
+                smtp_data = await smtp_fingerprint.scan_smtp_mx_records(mx_records, dns_resolver, [25, 587, 465], 5, watch_uuid, update_signal) if enable_smtp else None
 
                 # MAC address lookup (always enabled for local network detection)
                 mac_data = await mac_lookup.scan_mac(ip_address, watch_uuid, update_signal)
