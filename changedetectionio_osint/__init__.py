@@ -17,5 +17,6 @@ del _
 supports_visual_selector = False
 supports_browser_steps = False
 supports_text_filters_and_triggers = True
+supports_text_filters_and_triggers_elements = False
 supports_request_type = False
 
