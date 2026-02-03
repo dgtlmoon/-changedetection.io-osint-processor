@@ -4,6 +4,8 @@ Fast asyncio-based TCP connect port scanning
 """
 
 import asyncio
+# SOCKS5 proxy support: Port scanning not compatible with SOCKS5
+supports_socks5 = False
 from loguru import logger
 
 # ============================================================================

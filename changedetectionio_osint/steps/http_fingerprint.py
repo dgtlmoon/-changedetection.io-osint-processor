@@ -4,6 +4,8 @@ Captures server-side HTTP/HTTPS fingerprints including redirect chains and CDN d
 """
 
 import asyncio
+# SOCKS5 proxy support: HTTP requests support SOCKS5 via requests library
+supports_socks5 = True
 import socket
 import time
 import hashlib
@@ -33,36 +35,44 @@ async def scan_http(url, dns_resolver, proxy_url=None, watch_uuid=None, update_s
         import requests
 
         # Monkey-patch socket.getaddrinfo to use our custom DNS server
+        # CRITICAL: Skip DNS monkey-patching when using SOCKS5 proxy to prevent DNS leaks
+        # SOCKS5 proxy should handle DNS resolution (use socks5h:// for remote DNS)
         original_getaddrinfo = socket.getaddrinfo
 
-        def custom_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-            """Custom getaddrinfo that uses our DNS_SERVER"""
-            try:
-                # Use our dns_resolver to resolve the hostname
+        if not proxy_url or not proxy_url.strip():
+            # Only monkey-patch DNS when NOT using proxy
+            def custom_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+                """Custom getaddrinfo that uses our DNS_SERVER"""
                 try:
-                    answers = dns_resolver.resolve(host, 'A')
-                    resolved_ip = str(answers[0])
-                except:
-                    # Fallback to AAAA
+                    # Use our dns_resolver to resolve the hostname
                     try:
-                        answers = dns_resolver.resolve(host, 'AAAA')
+                        answers = dns_resolver.resolve(host, 'A')
                         resolved_ip = str(answers[0])
                     except:
-                        # If our DNS fails, fall back to original
-                        return original_getaddrinfo(host, port, family, type, proto, flags)
+                        # Fallback to AAAA
+                        try:
+                            answers = dns_resolver.resolve(host, 'AAAA')
+                            resolved_ip = str(answers[0])
+                        except:
+                            # If our DNS fails, fall back to original
+                            return original_getaddrinfo(host, port, family, type, proto, flags)
 
-                # Return address info with our resolved IP
-                if ':' in resolved_ip:
-                    # IPv6
-                    return [(socket.AF_INET6, socket.SOCK_STREAM, proto, '', (resolved_ip, port, 0, 0))]
-                else:
-                    # IPv4
-                    return [(socket.AF_INET, socket.SOCK_STREAM, proto, '', (resolved_ip, port))]
-            except:
-                return original_getaddrinfo(host, port, family, type, proto, flags)
+                    # Return address info with our resolved IP
+                    if ':' in resolved_ip:
+                        # IPv6
+                        return [(socket.AF_INET6, socket.SOCK_STREAM, proto, '', (resolved_ip, port, 0, 0))]
+                    else:
+                        # IPv4
+                        return [(socket.AF_INET, socket.SOCK_STREAM, proto, '', (resolved_ip, port))]
+                except:
+                    return original_getaddrinfo(host, port, family, type, proto, flags)
 
-        # Apply the monkey-patch
-        socket.getaddrinfo = custom_getaddrinfo
+            # Apply the monkey-patch (only when not using proxy)
+            socket.getaddrinfo = custom_getaddrinfo
+        else:
+            # When using SOCKS5 proxy: let proxy handle DNS resolution
+            # User should use socks5h:// (not socks5://) for remote DNS resolution
+            logger.debug("SOCKS5 proxy configured - skipping DNS monkey-patch to prevent leaks")
 
         parsed = urlparse(url)
         session = requests.Session()

@@ -4,6 +4,8 @@ Gets MAC address from ARP cache for local network targets
 """
 
 import asyncio
+# SOCKS5 proxy support: MAC address lookups are local network only (Layer 2)
+supports_socks5 = False
 import re
 import subprocess
 from loguru import logger

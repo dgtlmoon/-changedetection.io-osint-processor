@@ -4,6 +4,8 @@ Deep SSL/TLS certificate and cipher analysis using SSLyze
 """
 
 import asyncio
+# SOCKS5 proxy support: SSLyze library doesn't support SOCKS5 proxies (TODO: implement custom socket wrapper)
+supports_socks5 = False
 from loguru import logger
 
 

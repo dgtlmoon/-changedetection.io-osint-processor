@@ -75,7 +75,52 @@ pip3 install changedetection.io-osint
 
 **⚠️ Note:** Requires `cryptography>=43,<45` for sslyze compatibility.
 
-**⚠️ Note note!:** Does not actually use any proxy settings for now (runs from your changedetection.io network source).
+### 🔒 SOCKS5 Proxy Support
+
+The OSINT processor supports **SOCKS5 proxies** for enhanced privacy and anonymity. This is perfect for:
+- 🧅 **Tor onion routing** (`socks5h://127.0.0.1:9050`)
+- 🛡️ **Anonymous reconnaissance** without exposing your IP
+- 🌍 **Geolocation bypass** via SOCKS5 proxy servers
+- 🔐 **Privacy-focused monitoring** of sensitive targets
+
+#### ⚠️ **CRITICAL SECURITY WARNING: DNS Leaks**
+
+**Always use `socks5h://` (not `socks5://`) to prevent DNS leaks!**
+
+- ✅ `socks5h://127.0.0.1:9050` - Remote DNS resolution (secure)
+- ❌ `socks5://127.0.0.1:9050` - Local DNS resolution (**LEAKS YOUR QUERIES**)
+
+The `h` in `socks5h://` forces hostname resolution through the SOCKS5 proxy, preventing your DNS queries from leaking to your local DNS server.
+
+**What we do to prevent leaks:**
+- DNS scans use TCP (port 53) through SOCKS5 - **no local DNS**
+- HTTP scans skip local DNS resolution when proxy is configured
+- SSH/SMTP pass hostnames to proxy - **remote DNS only**
+- If SOCKS5 connection fails, we **block the request** (no fallback to direct connection)
+
+**Without these protections**, your real IP and DNS queries would be exposed even when using a proxy!
+
+**Supported Steps**:
+
+| Step | SOCKS5 Support | Notes |
+|------|----------------|-------|
+| DNS Records | ✅ Supported | Uses DNS-over-TCP (port 53) through SOCKS5 |
+| HTTP Fingerprinting | ✅ Supported | Full proxy support via requests library |
+| SSH Fingerprinting | ✅ Supported | TCP connections proxied via python-socks |
+| SMTP Fingerprinting | ✅ Supported | MX server scans through SOCKS5 proxy |
+| DNSSEC Validation | ⚠️ Partial | DNS-over-TCP possible (not yet implemented) |
+| Email Security (SPF/DMARC/DKIM) | ⚠️ Partial | DNS-over-TCP possible (not yet implemented) |
+| WHOIS Lookup | ⚠️ Partial | TCP port 43 compatible (library limitation) |
+| TLS Analysis | ⚠️ Partial | TCP-based but SSLyze doesn't support SOCKS5 |
+| Port Scanning | ❌ Not supported | Raw socket connections |
+| Traceroute | ❌ Not supported | ICMP/UDP packets incompatible |
+| BGP/ASN Info | ❌ Not supported | API lookups (not yet implemented) |
+| OS Detection | ❌ Not supported | Raw socket fingerprinting |
+| MAC Address Lookup | ❌ Not supported | Layer 2 local network only |
+
+**Note**: When a SOCKS5 proxy is configured, unsupported steps are automatically skipped and listed in the scan output.
+
+**⚠️ Important**: Only SOCKS5 proxies are supported. HTTP/HTTPS proxies will be rejected with an error message.
 
 ## 🚀 Quick Start
 <img src="docs/osint-use.png" style="max-width: 500px;">

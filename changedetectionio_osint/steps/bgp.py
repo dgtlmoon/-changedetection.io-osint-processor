@@ -4,6 +4,8 @@ Retrieves BGP/ASN information about the target IP
 """
 
 import asyncio
+# SOCKS5 proxy support: BGP uses HTTP APIs, but proxy not currently implemented
+supports_socks5 = False
 from loguru import logger
 
 

@@ -4,13 +4,15 @@ Connects to SSH service to extract server banner, version, and host key fingerpr
 """
 
 import asyncio
+# SOCKS5 proxy support: SSH fingerprinting supports SOCKS5 via python-socks
+supports_socks5 = True
 import socket
 import hashlib
 import base64
 from loguru import logger
 
 
-async def scan_ssh(hostname, port=22, timeout=5, watch_uuid=None, update_signal=None):
+async def scan_ssh(hostname, port=22, timeout=5, proxy_url=None, watch_uuid=None, update_signal=None):
     """
     Perform SSH server fingerprinting
 
@@ -18,6 +20,7 @@ async def scan_ssh(hostname, port=22, timeout=5, watch_uuid=None, update_signal=
         hostname: Target hostname or IP address
         port: SSH port (default 22)
         timeout: Connection timeout in seconds
+        proxy_url: Optional SOCKS5 proxy URL (socks5://user:pass@host:port)
         watch_uuid: Optional watch UUID for status updates
         update_signal: Optional blinker signal for status updates
 
@@ -42,11 +45,36 @@ async def scan_ssh(hostname, port=22, timeout=5, watch_uuid=None, update_signal=
         }
 
         try:
-            # Try to connect to SSH port
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(hostname, port),
-                timeout=timeout
-            )
+            # Connect to SSH port (with optional SOCKS5 proxy support)
+            if proxy_url and proxy_url.strip():
+                # Use SOCKS5 proxy for connection
+                try:
+                    from python_socks.async_.asyncio import Proxy
+                    from urllib.parse import urlparse
+
+                    # Parse SOCKS5 proxy URL
+                    parsed = urlparse(proxy_url)
+                    proxy = Proxy.from_url(proxy_url)
+
+                    # Connect through SOCKS5 proxy
+                    sock = await asyncio.wait_for(
+                        proxy.connect(dest_host=hostname, dest_port=port, timeout=timeout),
+                        timeout=timeout
+                    )
+
+                    # Create reader/writer from the socket
+                    reader, writer = await asyncio.open_connection(sock=sock)
+
+                except ImportError:
+                    logger.error("SOCKS5 proxy requested but 'python-socks[asyncio]' is not installed")
+                    results['error'] = "SOCKS5 proxy support requires 'python-socks[asyncio]' package"
+                    return results
+            else:
+                # Direct connection (no proxy)
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(hostname, port),
+                    timeout=timeout
+                )
 
             results['port_open'] = True
 

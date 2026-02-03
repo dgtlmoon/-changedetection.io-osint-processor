@@ -4,11 +4,13 @@ Connects to MX (Mail Exchange) servers to extract server banner, capabilities, a
 """
 
 import asyncio
+# SOCKS5 proxy support: SMTP fingerprinting supports SOCKS5 via python-socks
+supports_socks5 = True
 import socket
 from loguru import logger
 
 
-async def scan_smtp_mx_records(mx_records, dns_resolver, ports=[25, 587, 465], timeout=5, watch_uuid=None, update_signal=None):
+async def scan_smtp_mx_records(mx_records, dns_resolver, ports=[25, 587, 465], timeout=5, proxy_url=None, ehlo_hostname='localhost.localdomain', watch_uuid=None, update_signal=None):
     """
     Perform SMTP server fingerprinting on MX (Mail Exchange) records
 
@@ -17,6 +19,8 @@ async def scan_smtp_mx_records(mx_records, dns_resolver, ports=[25, 587, 465], t
         dns_resolver: Configured dns.resolver.Resolver instance for resolving MX hostnames
         ports: List of SMTP ports to check (default: [25, 587, 465])
         timeout: Connection timeout in seconds
+        proxy_url: Optional SOCKS5 proxy URL (socks5://user:pass@host:port)
+        ehlo_hostname: Hostname to use in SMTP EHLO command (default: localhost.localdomain)
         watch_uuid: Optional watch UUID for status updates
         update_signal: Optional blinker signal for status updates
 
@@ -55,31 +59,40 @@ async def scan_smtp_mx_records(mx_records, dns_resolver, ports=[25, 587, 465], t
         hostname = mx_server['hostname']
         priority = mx_server['priority']
 
-        # Resolve MX hostname to IP
-        try:
-            answers = dns_resolver.resolve(hostname, 'A')
-            ip_address = str(answers[0])
-        except Exception:
+        # Resolve MX hostname to IP (unless using SOCKS5 proxy)
+        # CRITICAL: When using SOCKS5, pass hostname to proxy - don't resolve locally (DNS leak!)
+        if proxy_url and proxy_url.strip():
+            # Using SOCKS5: Let proxy resolve hostname remotely - no local DNS leak
+            ip_address = None  # Will pass hostname to connection instead
+            target_host = hostname  # Connect to hostname via SOCKS5
+            logger.debug(f"Scanning MX server {hostname} via SOCKS5 (remote DNS) priority {priority}")
+        else:
+            # No proxy: Resolve locally
             try:
-                answers = dns_resolver.resolve(hostname, 'AAAA')
+                answers = dns_resolver.resolve(hostname, 'A')
                 ip_address = str(answers[0])
-            except Exception as e:
-                logger.debug(f"Failed to resolve MX server {hostname}: {e}")
-                return {
-                    'mx_hostname': hostname,
-                    'priority': priority,
-                    'ip_address': None,
-                    'error': f"DNS resolution failed: {e}",
-                    'port_results': []
-                }
+            except Exception:
+                try:
+                    answers = dns_resolver.resolve(hostname, 'AAAA')
+                    ip_address = str(answers[0])
+                except Exception as e:
+                    logger.debug(f"Failed to resolve MX server {hostname}: {e}")
+                    return {
+                        'mx_hostname': hostname,
+                        'priority': priority,
+                        'ip_address': None,
+                        'error': f"DNS resolution failed: {e}",
+                        'port_results': []
+                    }
+            target_host = ip_address
+            logger.debug(f"Scanning MX server {hostname} ({ip_address}) priority {priority}")
 
         if update_signal and watch_uuid:
-            update_signal.send(watch_uuid=watch_uuid, status=f"SMTP: {hostname} ({ip_address})")
-
-        logger.debug(f"Scanning MX server {hostname} ({ip_address}) priority {priority}")
+            status_msg = f"SMTP: {hostname}" + (f" ({ip_address})" if ip_address else " (via SOCKS5)")
+            update_signal.send(watch_uuid=watch_uuid, status=status_msg)
 
         # Scan all ports on this MX server
-        port_tasks = [smtp_fingerprint_port(ip_address, port, hostname, timeout) for port in ports]
+        port_tasks = [smtp_fingerprint_port(target_host, port, hostname, timeout, proxy_url, ehlo_hostname) for port in ports]
         port_results = await asyncio.gather(*port_tasks, return_exceptions=True)
 
         return {
@@ -90,8 +103,18 @@ async def scan_smtp_mx_records(mx_records, dns_resolver, ports=[25, 587, 465], t
             'open_ports': [r['port'] for r in port_results if not isinstance(r, Exception) and r.get('port_open')]
         }
 
-    async def smtp_fingerprint_port(ip_address, port, mx_hostname, timeout):
-        """Fingerprint SMTP on a specific port of an IP address"""
+    async def smtp_fingerprint_port(target_host, port, mx_hostname, timeout, proxy_url=None, ehlo_hostname='localhost.localdomain'):
+        """
+        Fingerprint SMTP on a specific port
+
+        Args:
+            target_host: IP address (no proxy) or hostname (with SOCKS5 proxy for remote DNS)
+            port: SMTP port to scan
+            mx_hostname: MX hostname for logging
+            timeout: Connection timeout
+            proxy_url: Optional SOCKS5 proxy URL
+            ehlo_hostname: Hostname to use in SMTP EHLO command
+        """
         result = {
             'port': port,
             'port_open': False,
@@ -112,11 +135,34 @@ async def scan_smtp_mx_records(mx_records, dns_resolver, ports=[25, 587, 465], t
         }
 
         try:
-            # Connect to SMTP port
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(ip_address, port),
-                timeout=timeout
-            )
+            # Connect to SMTP port (with optional SOCKS5 proxy support)
+            if proxy_url and proxy_url.strip():
+                # Use SOCKS5 proxy for connection
+                try:
+                    from python_socks.async_.asyncio import Proxy
+
+                    # Connect through SOCKS5 proxy
+                    # target_host is hostname - proxy will resolve it remotely (no DNS leak)
+                    proxy = Proxy.from_url(proxy_url)
+                    sock = await asyncio.wait_for(
+                        proxy.connect(dest_host=target_host, dest_port=port, timeout=timeout),
+                        timeout=timeout
+                    )
+
+                    # Create reader/writer from the socket
+                    reader, writer = await asyncio.open_connection(sock=sock)
+
+                except ImportError:
+                    logger.error("SOCKS5 proxy requested but 'python-socks[asyncio]' is not installed")
+                    result['error'] = "SOCKS5 proxy support requires 'python-socks[asyncio]' package"
+                    return result
+            else:
+                # Direct connection (no proxy)
+                # target_host is IP address (already resolved)
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(target_host, port),
+                    timeout=timeout
+                )
 
             result['port_open'] = True
 
@@ -135,7 +181,8 @@ async def scan_smtp_mx_records(mx_records, dns_resolver, ports=[25, 587, 465], t
                 logger.debug(f"SMTP banner on {mx_hostname}:{port}: {banner}")
 
                 # Send EHLO command to get capabilities
-                ehlo_cmd = f"EHLO changedetection.io\r\n"
+                # Use configured hostname (default: localhost.localdomain) for privacy
+                ehlo_cmd = f"EHLO {ehlo_hostname}\r\n"
                 writer.write(ehlo_cmd.encode())
                 await writer.drain()
 
@@ -204,14 +251,14 @@ async def scan_smtp_mx_records(mx_records, dns_resolver, ports=[25, 587, 465], t
 
         except asyncio.TimeoutError:
             result['error'] = f"Connection timeout"
-            logger.debug(f"SMTP connection timeout: {ip_address}:{port}")
+            logger.debug(f"SMTP connection timeout: {target_host}:{port}")
         except ConnectionRefusedError:
             result['error'] = f"Connection refused"
         except socket.gaierror as e:
             result['error'] = f"DNS error: {e}"
         except Exception as e:
             result['error'] = f"Connection error: {str(e)}"
-            logger.debug(f"SMTP fingerprint error on {ip_address}:{port}: {e}")
+            logger.debug(f"SMTP fingerprint error on {target_host}:{port}: {e}")
 
         return result
 

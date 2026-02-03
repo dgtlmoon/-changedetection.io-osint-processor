@@ -4,6 +4,8 @@ Performs WHOIS queries using python-whois library
 """
 
 import asyncio
+# SOCKS5 proxy support: python-whois library doesn't support SOCKS5 (TODO: implement raw WHOIS over SOCKS5)
+supports_socks5 = False
 from datetime import datetime, timezone
 from loguru import logger
 

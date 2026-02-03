@@ -122,6 +122,7 @@ class perform_site_check(text_json_diff_processor):
         enable_dnssec = processor_config.get('enable_dnssec', True)
         enable_ssh = processor_config.get('enable_ssh', True)
         enable_smtp = processor_config.get('enable_smtp', True)
+        smtp_ehlo_hostname = processor_config.get('smtp_ehlo_hostname', 'localhost.localdomain') or 'localhost.localdomain'
         whois_expire_warning_days = processor_config.get('whois_expire_warning_days', 3)
         tls_expire_warning_days = processor_config.get('tls_expire_warning_days', 3)
 
@@ -144,7 +145,18 @@ class perform_site_check(text_json_diff_processor):
         proxy_url = None
         if preferred_proxy_id:
             proxy_url = self.datastore.proxy_list.get(preferred_proxy_id).get('url')
-            logger.debug(f"Using proxy '{proxy_url}' for OSINT reconnaissance")
+
+            # OSINT plugin ONLY supports SOCKS5 proxies
+            # HTTP/HTTPS proxies don't work for raw socket operations (SSH, SMTP, port scan)
+            if proxy_url and proxy_url.strip():  # Check if proxy is set and not empty
+                if not proxy_url.lower().startswith('socks5://'):
+                    raise ValueError(
+                        f"OSINT Reconnaissance processor only supports SOCKS5 proxies. "
+                        f"Got '{proxy_url}' but expected 'socks5://...'. "
+                        f"HTTP/HTTPS proxies are not supported for raw socket operations (SSH, SMTP, port scanning). "
+                        f"Please configure a SOCKS5 proxy or use 'No proxy' for this watch."
+                    )
+                logger.info(f"Using SOCKS5 proxy '{proxy_url}' for OSINT reconnaissance")
 
         try:
             import dns.resolver
@@ -189,13 +201,23 @@ class perform_site_check(text_json_diff_processor):
             # RUN SCAN STEPS (SERIAL OR PARALLEL BASED ON MODE)
             # =================================================================
 
+            # Track which steps are skipped due to SOCKS5 incompatibility
+            skipped_steps = []
+            using_socks5_proxy = bool(proxy_url and proxy_url.strip())
+
             if scan_mode == "parallel":
                 logger.info("Starting PARALLEL reconnaissance scans...")
 
                 # DNS must run first if SMTP is enabled (needs MX records)
                 # Run DNS first, then everything else in parallel
+                # Check SOCKS5 compatibility
                 if enable_dns:
-                    dns_results = await dns_step.scan_dns(hostname, dns_resolver, watch_uuid, update_signal)
+                    if using_socks5_proxy and not dns_step.supports_socks5:
+                        logger.info(f"Skipping DNS scan - does not support SOCKS5 proxy")
+                        skipped_steps.append(("DNS Records", "DNS queries not compatible with SOCKS5"))
+                        dns_results = None
+                    else:
+                        dns_results = await dns_step.scan_dns(hostname, dns_resolver, proxy_url, watch_uuid, update_signal)
                 else:
                     dns_results = None
 
@@ -205,34 +227,93 @@ class perform_site_check(text_json_diff_processor):
                     mx_records = dns_results.get('MX', [])
 
                 # Build list of remaining scans to run in parallel
+                # Check SOCKS5 compatibility for each scan
                 scans = []
+
+                # WHOIS
                 if enable_whois:
-                    scans.append(whois_lookup.scan_whois(hostname, watch_uuid, update_signal))
+                    if using_socks5_proxy and not whois_lookup.supports_socks5:
+                        skipped_steps.append(("WHOIS Lookup", "WHOIS protocol (port 43) not compatible with SOCKS5"))
+                    else:
+                        scans.append(whois_lookup.scan_whois(hostname, watch_uuid, update_signal))
+
+                # HTTP Fingerprinting
                 if enable_http:
-                    scans.append(http_fingerprint.scan_http(url, dns_resolver, proxy_url, watch_uuid, update_signal))
+                    if using_socks5_proxy and not http_fingerprint.supports_socks5:
+                        skipped_steps.append(("HTTP Fingerprinting", "HTTP client does not support SOCKS5"))
+                    else:
+                        scans.append(http_fingerprint.scan_http(url, dns_resolver, proxy_url, watch_uuid, update_signal))
+
+                # TLS Analysis
                 if enable_tls and parsed.scheme == 'https':
-                    scans.append(tls_analysis.scan_tls(hostname, port, watch_uuid, update_signal, tls_vulnerability_scan))
+                    if using_socks5_proxy and not tls_analysis.supports_socks5:
+                        skipped_steps.append(("SSL/TLS Analysis", "Direct TLS connections not compatible with SOCKS5"))
+                    else:
+                        scans.append(tls_analysis.scan_tls(hostname, port, watch_uuid, update_signal, tls_vulnerability_scan))
                 elif enable_tls:
                     scans.append(asyncio.sleep(0))  # Placeholder for TLS when not HTTPS
+
+                # Port Scanning
                 if enable_portscan:
-                    scans.append(portscan.scan_ports(ip_address, None, watch_uuid, update_signal))
+                    if using_socks5_proxy and not portscan.supports_socks5:
+                        skipped_steps.append(("Port Scanning", "Raw socket port scanning not compatible with SOCKS5"))
+                    else:
+                        scans.append(portscan.scan_ports(ip_address, None, watch_uuid, update_signal))
+
+                # Traceroute
                 if enable_traceroute:
-                    scans.append(traceroute.scan_traceroute(ip_address, dns_resolver, traceroute.TRACEROUTE_LAST_HOPS, watch_uuid, update_signal))
+                    if using_socks5_proxy and not traceroute.supports_socks5:
+                        skipped_steps.append(("Traceroute", "ICMP/UDP traceroute not compatible with SOCKS5"))
+                    else:
+                        scans.append(traceroute.scan_traceroute(ip_address, dns_resolver, traceroute.TRACEROUTE_LAST_HOPS, watch_uuid, update_signal))
+
+                # BGP/ASN
                 if enable_bgp:
-                    scans.append(bgp_step.scan_bgp(ip_address, watch_uuid, update_signal))
+                    if using_socks5_proxy and not bgp_step.supports_socks5:
+                        skipped_steps.append(("BGP/ASN Information", "BGP lookups not compatible with SOCKS5 proxy"))
+                    else:
+                        scans.append(bgp_step.scan_bgp(ip_address, watch_uuid, update_signal))
+
+                # OS Detection
                 if enable_os_detection:
-                    scans.append(os_detection.scan_os(ip_address, watch_uuid, update_signal))
+                    if using_socks5_proxy and not os_detection.supports_socks5:
+                        skipped_steps.append(("OS Detection", "TTL-based fingerprinting requires raw sockets, incompatible with SOCKS5"))
+                    else:
+                        scans.append(os_detection.scan_os(ip_address, watch_uuid, update_signal))
+
+                # Email Security
                 if enable_email_security:
-                    scans.append(email_security.scan_email_security(hostname, dns_resolver, watch_uuid, update_signal))
+                    if using_socks5_proxy and not email_security.supports_socks5:
+                        skipped_steps.append(("Email Security (SPF/DMARC/DKIM)", "DNS-based queries (UDP) not compatible with SOCKS5"))
+                    else:
+                        scans.append(email_security.scan_email_security(hostname, dns_resolver, watch_uuid, update_signal))
+
+                # DNSSEC
                 if enable_dnssec:
-                    scans.append(dnssec.scan_dnssec(hostname, dns_resolver, watch_uuid, update_signal))
+                    if using_socks5_proxy and not dnssec.supports_socks5:
+                        skipped_steps.append(("DNSSEC Validation", "DNS queries (UDP) not compatible with SOCKS5"))
+                    else:
+                        scans.append(dnssec.scan_dnssec(hostname, dns_resolver, watch_uuid, update_signal))
+
+                # SSH Fingerprinting
                 if enable_ssh:
-                    scans.append(ssh_fingerprint.scan_ssh(hostname, 22, 5, watch_uuid, update_signal))
+                    if using_socks5_proxy and not ssh_fingerprint.supports_socks5:
+                        skipped_steps.append(("SSH Fingerprinting", "SSH connections not compatible with SOCKS5"))
+                    else:
+                        scans.append(ssh_fingerprint.scan_ssh(hostname, 22, 5, proxy_url, watch_uuid, update_signal))
+
+                # SMTP Fingerprinting
                 if enable_smtp:
-                    scans.append(smtp_fingerprint.scan_smtp_mx_records(mx_records, dns_resolver, [25, 587, 465], 5, watch_uuid, update_signal))
+                    if using_socks5_proxy and not smtp_fingerprint.supports_socks5:
+                        skipped_steps.append(("SMTP/Email Server Fingerprinting", "SMTP connections not compatible with SOCKS5"))
+                    else:
+                        scans.append(smtp_fingerprint.scan_smtp_mx_records(mx_records, dns_resolver, [25, 587, 465], 5, proxy_url, smtp_ehlo_hostname, watch_uuid, update_signal))
 
                 # MAC address lookup (always enabled for local network detection)
-                scans.append(mac_lookup.scan_mac(ip_address, watch_uuid, update_signal))
+                if using_socks5_proxy and not mac_lookup.supports_socks5:
+                    skipped_steps.append(("MAC Address Lookup", "Layer 2 local network only, not compatible with SOCKS5"))
+                else:
+                    scans.append(mac_lookup.scan_mac(ip_address, watch_uuid, update_signal))
 
                 # Launch all remaining scans concurrently
                 if scans:
@@ -273,41 +354,139 @@ class perform_site_check(text_json_diff_processor):
             else:  # scan_mode == "serial"
                 logger.info("Starting SERIAL reconnaissance scans...")
 
-                # Run each enabled step sequentially
-                dns_results = await dns_step.scan_dns(hostname, dns_resolver, watch_uuid, update_signal) if enable_dns else None
+                # Run each enabled step sequentially with SOCKS5 compatibility checks
+
+                # DNS
+                if enable_dns:
+                    if using_socks5_proxy and not dns_step.supports_socks5:
+                        skipped_steps.append(("DNS Records", "DNS queries not compatible with SOCKS5"))
+                        dns_results = None
+                    else:
+                        dns_results = await dns_step.scan_dns(hostname, dns_resolver, proxy_url, watch_uuid, update_signal)
+                else:
+                    dns_results = None
 
                 # Get MX records for SMTP scanning
                 mx_records = []
                 if dns_results and isinstance(dns_results, dict):
                     mx_records = dns_results.get('MX', [])
 
-                whois_data = await whois_lookup.scan_whois(hostname, watch_uuid, update_signal) if enable_whois else None
+                # WHOIS
+                if enable_whois:
+                    if using_socks5_proxy and not whois_lookup.supports_socks5:
+                        skipped_steps.append(("WHOIS Lookup", "WHOIS protocol (port 43) not compatible with SOCKS5"))
+                        whois_data = None
+                    else:
+                        whois_data = await whois_lookup.scan_whois(hostname, watch_uuid, update_signal)
+                else:
+                    whois_data = None
 
-                http_fingerprint_data = await http_fingerprint.scan_http(url, dns_resolver, proxy_url, watch_uuid, update_signal) if enable_http else None
+                # HTTP Fingerprinting
+                if enable_http:
+                    if using_socks5_proxy and not http_fingerprint.supports_socks5:
+                        skipped_steps.append(("HTTP Fingerprinting", "HTTP client does not support SOCKS5"))
+                        http_fingerprint_data = None
+                    else:
+                        http_fingerprint_data = await http_fingerprint.scan_http(url, dns_resolver, proxy_url, watch_uuid, update_signal)
+                else:
+                    http_fingerprint_data = None
 
+                # TLS Analysis
                 if enable_tls and parsed.scheme == 'https':
-                    tls_results = await tls_analysis.scan_tls(hostname, port, watch_uuid, update_signal, tls_vulnerability_scan)
+                    if using_socks5_proxy and not tls_analysis.supports_socks5:
+                        skipped_steps.append(("SSL/TLS Analysis", "Direct TLS connections not compatible with SOCKS5"))
+                        tls_results = None
+                    else:
+                        tls_results = await tls_analysis.scan_tls(hostname, port, watch_uuid, update_signal, tls_vulnerability_scan)
                 else:
                     tls_results = None
 
-                open_ports = await portscan.scan_ports(ip_address, None, watch_uuid, update_signal) if enable_portscan else None
+                # Port Scanning
+                if enable_portscan:
+                    if using_socks5_proxy and not portscan.supports_socks5:
+                        skipped_steps.append(("Port Scanning", "Raw socket port scanning not compatible with SOCKS5"))
+                        open_ports = None
+                    else:
+                        open_ports = await portscan.scan_ports(ip_address, None, watch_uuid, update_signal)
+                else:
+                    open_ports = None
 
-                traceroute_hops = await traceroute.scan_traceroute(ip_address, dns_resolver, traceroute.TRACEROUTE_LAST_HOPS, watch_uuid, update_signal) if enable_traceroute else None
+                # Traceroute
+                if enable_traceroute:
+                    if using_socks5_proxy and not traceroute.supports_socks5:
+                        skipped_steps.append(("Traceroute", "ICMP/UDP traceroute not compatible with SOCKS5"))
+                        traceroute_hops = None
+                    else:
+                        traceroute_hops = await traceroute.scan_traceroute(ip_address, dns_resolver, traceroute.TRACEROUTE_LAST_HOPS, watch_uuid, update_signal)
+                else:
+                    traceroute_hops = None
 
-                bgp_data = await bgp_step.scan_bgp(ip_address, watch_uuid, update_signal) if enable_bgp else None
+                # BGP/ASN
+                if enable_bgp:
+                    if using_socks5_proxy and not bgp_step.supports_socks5:
+                        skipped_steps.append(("BGP/ASN Information", "BGP lookups not compatible with SOCKS5 proxy"))
+                        bgp_data = None
+                    else:
+                        bgp_data = await bgp_step.scan_bgp(ip_address, watch_uuid, update_signal)
+                else:
+                    bgp_data = None
 
-                os_data = await os_detection.scan_os(ip_address, watch_uuid, update_signal) if enable_os_detection else None
+                # OS Detection
+                if enable_os_detection:
+                    if using_socks5_proxy and not os_detection.supports_socks5:
+                        skipped_steps.append(("OS Detection", "TTL-based fingerprinting requires raw sockets, incompatible with SOCKS5"))
+                        os_data = None
+                    else:
+                        os_data = await os_detection.scan_os(ip_address, watch_uuid, update_signal)
+                else:
+                    os_data = None
 
-                email_security_data = await email_security.scan_email_security(hostname, dns_resolver, watch_uuid, update_signal) if enable_email_security else None
+                # Email Security
+                if enable_email_security:
+                    if using_socks5_proxy and not email_security.supports_socks5:
+                        skipped_steps.append(("Email Security (SPF/DMARC/DKIM)", "DNS-based queries (UDP) not compatible with SOCKS5"))
+                        email_security_data = None
+                    else:
+                        email_security_data = await email_security.scan_email_security(hostname, dns_resolver, watch_uuid, update_signal)
+                else:
+                    email_security_data = None
 
-                dnssec_data = await dnssec.scan_dnssec(hostname, dns_resolver, watch_uuid, update_signal) if enable_dnssec else None
+                # DNSSEC
+                if enable_dnssec:
+                    if using_socks5_proxy and not dnssec.supports_socks5:
+                        skipped_steps.append(("DNSSEC Validation", "DNS queries (UDP) not compatible with SOCKS5"))
+                        dnssec_data = None
+                    else:
+                        dnssec_data = await dnssec.scan_dnssec(hostname, dns_resolver, watch_uuid, update_signal)
+                else:
+                    dnssec_data = None
 
-                ssh_data = await ssh_fingerprint.scan_ssh(hostname, 22, 5, watch_uuid, update_signal) if enable_ssh else None
+                # SSH Fingerprinting
+                if enable_ssh:
+                    if using_socks5_proxy and not ssh_fingerprint.supports_socks5:
+                        skipped_steps.append(("SSH Fingerprinting", "SSH connections not compatible with SOCKS5"))
+                        ssh_data = None
+                    else:
+                        ssh_data = await ssh_fingerprint.scan_ssh(hostname, 22, 5, proxy_url, watch_uuid, update_signal)
+                else:
+                    ssh_data = None
 
-                smtp_data = await smtp_fingerprint.scan_smtp_mx_records(mx_records, dns_resolver, [25, 587, 465], 5, watch_uuid, update_signal) if enable_smtp else None
+                # SMTP Fingerprinting
+                if enable_smtp:
+                    if using_socks5_proxy and not smtp_fingerprint.supports_socks5:
+                        skipped_steps.append(("SMTP/Email Server Fingerprinting", "SMTP connections not compatible with SOCKS5"))
+                        smtp_data = None
+                    else:
+                        smtp_data = await smtp_fingerprint.scan_smtp_mx_records(mx_records, dns_resolver, [25, 587, 465], 5, proxy_url, smtp_ehlo_hostname, watch_uuid, update_signal)
+                else:
+                    smtp_data = None
 
                 # MAC address lookup (always enabled for local network detection)
-                mac_data = await mac_lookup.scan_mac(ip_address, watch_uuid, update_signal)
+                if using_socks5_proxy and not mac_lookup.supports_socks5:
+                    skipped_steps.append(("MAC Address Lookup", "Layer 2 local network only, not compatible with SOCKS5"))
+                    mac_data = None
+                else:
+                    mac_data = await mac_lookup.scan_mac(ip_address, watch_uuid, update_signal)
 
             logger.info(f"All scans completed ({scan_mode} mode), formatting output...")
 
@@ -322,11 +501,22 @@ class perform_site_check(text_json_diff_processor):
             header_lines.append(f"IP Address: {ip_address}")
             header_lines.append(f"Reverse DNS: {reverse_dns}")
 
+            # Show proxy if configured
+            if proxy_url and proxy_url.strip():
+                header_lines.append(f"SOCKS5 Proxy: {proxy_url}")
+
             # Add MAC address if available (local network only)
             if mac_data and not isinstance(mac_data, Exception) and mac_data.get('mac_address'):
                 header_lines.append(f"MAC Address: {mac_data['mac_address']}")
                 if mac_data.get('vendor'):
                     header_lines.append(f"MAC Vendor: {mac_data['vendor']}")
+
+            # Show skipped steps if using SOCKS5 proxy
+            if skipped_steps:
+                header_lines.append("")
+                header_lines.append("⚠ STEPS SKIPPED DUE TO SOCKS5 PROXY:")
+                for step_name, reason in skipped_steps:
+                    header_lines.append(f"  ✗ {step_name} - {reason}")
 
             header_lines.append("")
 

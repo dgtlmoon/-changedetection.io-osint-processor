@@ -27,6 +27,7 @@ setup(
         'requests>=2.26.0',             # HTTP fingerprinting (already in changedetection.io)
         'mac-vendor-lookup>=0.1.12',    # MAC address vendor lookup from IEEE OUI database
         'cryptography>=43,<45',         # Compatibility constraint: sslyze requires <45
+        'python-socks[asyncio]>=2.0.0', # SOCKS5 proxy support for SSH/SMTP fingerprinting
     ],
     entry_points={
         'changedetectionio': [

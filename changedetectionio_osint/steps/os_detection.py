@@ -4,6 +4,8 @@ Performs operating system fingerprinting when raw socket permissions available
 """
 
 import asyncio
+# SOCKS5 proxy support: OS detection requires raw sockets/ICMP
+supports_socks5 = False
 import socket
 import struct
 from loguru import logger

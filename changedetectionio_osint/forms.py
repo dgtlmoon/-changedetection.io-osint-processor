@@ -106,6 +106,15 @@ class processor_settings_form(processor_text_json_diff_form):
         default=True
     )
 
+    processor_config_smtp_ehlo_hostname = StringField(
+        _l('SMTP EHLO Hostname'),
+        validators=[
+            validators.Optional(),
+            validators.Length(max=253, message=_l('Hostname is too long'))
+        ],
+        render_kw={"placeholder": "localhost.localdomain", "size": "30"}
+    )
+
     processor_config_whois_expire_warning_days = IntegerField(
         _l('WHOIS Expiration Warning (days)'),
         validators=[
@@ -266,6 +275,14 @@ class processor_settings_form(processor_text_json_diff_form):
                 {{ render_checkbox_field(form.processor_config_enable_smtp) }}
                 <span class="pure-form-message-inline">
                     SMTP fingerprinting: Email server capabilities, authentication, and encryption (ports 25, 587, 465)
+                </span>
+            </div>
+
+            <div class="pure-control-group" style="margin-left: 25px;">
+                {{ render_field(form.processor_config_smtp_ehlo_hostname, placeholder="localhost.localdomain", size="30") }}
+                <span class="pure-form-message-inline">
+                    <strong>Hostname to use in SMTP EHLO command.</strong><br>
+                    ⚠️ Security: Leave empty to use "localhost.localdomain" (anonymous). Setting this to a real hostname may reveal your identity.
                 </span>
             </div>
         </fieldset>

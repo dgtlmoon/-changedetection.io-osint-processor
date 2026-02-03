@@ -4,6 +4,8 @@ Validates DNSSEC signatures and chain of trust for domain security
 """
 
 import asyncio
+# SOCKS5 proxy support: Requires DNS-over-TCP implementation (TODO: use dns.query.tcp with SOCKS5 socket)
+supports_socks5 = False
 from loguru import logger
 from datetime import datetime
 

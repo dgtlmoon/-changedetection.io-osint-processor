@@ -4,6 +4,8 @@ Analyzes SPF, DMARC, and DKIM records for email authentication and anti-spoofing
 """
 
 import asyncio
+# SOCKS5 proxy support: Requires DNS-over-TCP implementation (TODO: use dns.query.tcp with SOCKS5 socket)
+supports_socks5 = False
 import re
 from loguru import logger
 

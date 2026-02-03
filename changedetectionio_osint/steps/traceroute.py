@@ -4,6 +4,8 @@ Performs traceroute and displays last N hops to target
 """
 
 import asyncio
+# SOCKS5 proxy support: Traceroute uses ICMP/UDP, incompatible with SOCKS5
+supports_socks5 = False
 import socket
 import struct
 from loguru import logger
