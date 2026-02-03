@@ -84,11 +84,22 @@ class WHOISScanStep(ScanStep):
                 try:
                     # Ensure expiration_date is a datetime object
                     if not isinstance(expiration_date, datetime):
-                        expiration_date = datetime.fromisoformat(str(expiration_date).replace('Z', '+00:00'))
+                        date_str = str(expiration_date)
+                        # Try multiple parsing strategies
+                        try:
+                            # Try ISO format with Z replacement
+                            expiration_date = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                        except (ValueError, AttributeError):
+                            # Try parsing without timezone
+                            from dateutil import parser
+                            expiration_date = parser.parse(date_str)
 
                     # Make timezone-aware if needed
                     if expiration_date.tzinfo is None:
                         expiration_date = expiration_date.replace(tzinfo=timezone.utc)
+                    # Convert to UTC if it's in a different timezone
+                    elif expiration_date.tzinfo != timezone.utc:
+                        expiration_date = expiration_date.astimezone(timezone.utc)
 
                     now = datetime.now(timezone.utc)
                     days_to_expire = (expiration_date - now).days
@@ -103,7 +114,8 @@ class WHOISScanStep(ScanStep):
                     elif days_to_expire < 0:
                         lines.append("⚠️  WARNING: Domain has EXPIRED!")
                 except Exception as e:
-                    logger.debug(f"Could not calculate expiration countdown: {e}")
+                    logger.error(f"Could not parse expiration date for countdown: {e}")
+                    lines.append(f"⚠️  ERROR: Could not parse expiration date format: {e}")
         else:
             lines.append("No WHOIS data available")
 

@@ -95,6 +95,15 @@ class processor_settings_form(processor_text_json_diff_form):
         default=3
     )
 
+    processor_config_tls_expire_warning_days = IntegerField(
+        _l('TLS Certificate Expiration Warning (days)'),
+        validators=[
+            validators.Optional(),
+            validators.NumberRange(min=0, max=10000)
+        ],
+        default=3
+    )
+
     def extra_tab_content(self):
         """Tab label for processor-specific settings."""
         return _l('OSINT Settings')
@@ -167,6 +176,13 @@ class processor_settings_form(processor_text_json_diff_form):
                 {{ render_checkbox_field(form.processor_config_enable_tls) }}
                 <span class="pure-form-message-inline">
                     SSL/TLS certificate analysis: Validity, issuer, cipher suites, protocols
+                </span>
+            </div>
+
+            <div class="pure-control-group" style="margin-left: 25px;">
+                {{ render_field(form.processor_config_tls_expire_warning_days, placeholder="3", size="5") }}
+                <span class="pure-form-message-inline">
+                    Show countdown warning when TLS certificate expires within this many days (0 to disable warnings)
                 </span>
             </div>
 

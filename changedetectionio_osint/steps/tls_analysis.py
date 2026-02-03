@@ -92,8 +92,15 @@ async def scan_tls(hostname, port=443, watch_uuid=None, update_signal=None, vuln
         return []
 
 
-def format_tls_results(ssl_results, watch_uuid=None, update_signal=None):
-    """Format TLS/SSL results for output"""
+def format_tls_results(ssl_results, expire_warning_days=3, watch_uuid=None, update_signal=None):
+    """Format TLS/SSL results for output
+
+    Args:
+        ssl_results: SSL scan results from SSLyze
+        expire_warning_days: Number of days before expiration to show warning (default: 3)
+        watch_uuid: Optional watch UUID for status updates
+        update_signal: Optional blinker signal for status updates
+    """
     lines = []
     lines.append("=== SSL/TLS Analysis (SSLyze) ===")
     lines.append("SERVER TLS Fingerprint - Full capabilities for JA3S analysis")
@@ -149,6 +156,37 @@ def format_tls_results(ssl_results, watch_uuid=None, update_signal=None):
                     lines.append(f"  Status: ✗ NOT YET VALID")
                 else:
                     lines.append(f"  Status: ✗ EXPIRED")
+
+                # Add expiration countdown if within configured warning days
+                if expire_warning_days > 0:
+                    try:
+                        # Ensure timezone-aware comparison
+                        cert_valid_until = valid_until
+                        cert_valid_from = valid_from
+
+                        # Make timezone-aware if needed (though should already be UTC)
+                        if cert_valid_until.tzinfo is None:
+                            cert_valid_until = cert_valid_until.replace(tzinfo=timezone.utc)
+                        if cert_valid_from.tzinfo is None:
+                            cert_valid_from = cert_valid_from.replace(tzinfo=timezone.utc)
+
+                        # Recalculate for safety
+                        days_left = (cert_valid_until - now_utc).days
+
+                        if days_left <= expire_warning_days and days_left >= 0:
+                            if days_left == 0:
+                                lines.append("  ⚠️  WARNING: Certificate expires TODAY!")
+                            elif days_left == 1:
+                                lines.append("  ⚠️  WARNING: Certificate expires in 1 day")
+                            else:
+                                lines.append(f"  ⚠️  WARNING: Certificate expires in {days_left} days")
+                        elif days_left < 0:
+                            lines.append("  ⚠️  WARNING: Certificate has EXPIRED!")
+                        elif now_utc < cert_valid_from:
+                            lines.append("  ⚠️  WARNING: Certificate is not yet valid!")
+                    except Exception as e:
+                        logger.error(f"Could not calculate certificate expiration countdown: {e}")
+                        lines.append(f"  ⚠️  ERROR: Could not calculate certificate expiration: {e}")
 
                 lines.append(f"  Serial Number: {cert.serial_number}")
 

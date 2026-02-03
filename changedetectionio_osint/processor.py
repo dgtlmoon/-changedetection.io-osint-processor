@@ -111,6 +111,7 @@ class perform_site_check(text_json_diff_processor):
         enable_bgp = processor_config.get('enable_bgp', True)
         enable_os_detection = processor_config.get('enable_os_detection', True)
         whois_expire_warning_days = processor_config.get('whois_expire_warning_days', 3)
+        tls_expire_warning_days = processor_config.get('tls_expire_warning_days', 3)
 
         logger.info(f"Running OSINT reconnaissance on {url} (mode: {scan_mode}, DNS: {dns_server})")
         update_signal.send(watch_uuid=watch_uuid, status="Starting")
@@ -299,7 +300,7 @@ class perform_site_check(text_json_diff_processor):
 
             # TLS/SSL section (only for HTTPS)
             if parsed.scheme == 'https' and tls_results and not isinstance(tls_results, Exception) and tls_results:
-                sections["SSL/TLS Analysis (SSLyze)"] = tls_analysis.format_tls_results(tls_results, watch_uuid, update_signal)
+                sections["SSL/TLS Analysis (SSLyze)"] = tls_analysis.format_tls_results(tls_results, tls_expire_warning_days, watch_uuid, update_signal)
 
             # Traceroute section
             if traceroute_hops and not isinstance(traceroute_hops, Exception):
