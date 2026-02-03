@@ -26,6 +26,7 @@ setup(
         'sslyze>=6.0.0',                # Deep SSL/TLS certificate and cipher analysis
         'requests>=2.26.0',             # HTTP fingerprinting (already in changedetection.io)
         'mac-vendor-lookup>=0.1.12',    # MAC address vendor lookup from IEEE OUI database
+        'cryptography>=43,<45',         # Compatibility constraint: sslyze requires <45
     ],
     entry_points={
         'changedetectionio': [

@@ -1,0 +1,150 @@
+name: Publish Python 🐍distribution 📦 to PyPI and TestPyPI
+
+on: push
+jobs:
+  build:
+    name: Build distribution 📦
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.11"
+    - name: Extract version from tag
+      id: get_version
+      run: |
+        if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+          VERSION=${GITHUB_REF#refs/tags/}
+          # Strip 'v' prefix if present (handles both v0.0.1 and 0.0.1)
+          VERSION=${VERSION#v}
+          echo "Building version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          # Update version in setup.py
+          sed -i "s/version='[^']*'/version='$VERSION'/" setup.py
+          echo "Updated setup.py with version $VERSION"
+          grep "version=" setup.py
+        else
+          echo "Not a tag build, using version from setup.py"
+        fi
+    - name: Install pypa/build
+      run: >-
+        python3 -m
+        pip install
+        build
+        --user
+    - name: Build a binary wheel and a source tarball
+      run: python3 -m build
+    - name: Store the distribution packages
+      uses: actions/upload-artifact@v6
+      with:
+        name: python-package-distributions
+        path: dist/
+
+
+  test-pypi-package:
+    name: Test the built package is valid
+    runs-on: ubuntu-latest
+    needs:
+    - build
+    steps:
+    - name: Download all the dists
+      uses: actions/download-artifact@v7
+      with:
+        name: python-package-distributions
+        path: dist/
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.11'
+
+    - name: Verify package integrity and contents
+      run: |
+        set -ex
+
+        # List all built packages
+        echo "=== Built packages ==="
+        ls -lh dist/
+
+        # Verify wheel file exists and can be inspected
+        WHEEL=$(find dist -type f -name "*.whl" -print -quit)
+        if [ -z "$WHEEL" ]; then
+          echo "ERROR: No wheel file found!"
+          exit 1
+        fi
+        echo "Found wheel: $WHEEL"
+
+        # Verify tarball exists
+        TARBALL=$(find dist -type f -name "*.tar.gz" -print -quit)
+        if [ -z "$TARBALL" ]; then
+          echo "ERROR: No tarball found!"
+          exit 1
+        fi
+        echo "Found tarball: $TARBALL"
+
+        # Install wheel inspection tools
+        python3 -m pip install --upgrade pip wheel pkginfo
+
+        # Inspect wheel metadata
+        echo "=== Wheel metadata ==="
+        python3 -m pip show --files "$WHEEL" 2>/dev/null || python3 -c "
+import zipfile
+import sys
+with zipfile.ZipFile('$WHEEL', 'r') as zf:
+    print('Wheel contents:')
+    for name in sorted(zf.namelist())[:50]:  # First 50 files
+        info = zf.getinfo(name)
+        print(f'  {name} ({info.file_size} bytes)')
+    total = len(zf.namelist())
+    if total > 50:
+        print(f'  ... and {total - 50} more files')
+"
+
+        # Test that wheel is a valid zip
+        python3 -c "import zipfile; zipfile.ZipFile('$WHEEL').testzip()" && echo "✓ Wheel ZIP integrity OK"
+
+        # Extract and verify tarball
+        echo "=== Tarball contents ==="
+        tar -tzf "$TARBALL" | head -n 50
+
+        # Test that tarball can be extracted
+        mkdir -p /tmp/test-extract
+        tar -xzf "$TARBALL" -C /tmp/test-extract && echo "✓ Tarball extraction OK"
+
+        # Check package metadata using pkginfo
+        echo "=== Package metadata ==="
+        python3 -c "
+import pkginfo
+wheel = pkginfo.Wheel('$WHEEL')
+print(f'Name: {wheel.name}')
+print(f'Version: {wheel.version}')
+print(f'Author: {wheel.author}')
+print(f'Summary: {wheel.summary}')
+"
+
+        echo "✓ All package integrity checks passed!"
+
+
+  publish-to-pypi:
+    name: >-
+      Publish Python 🐍 distribution 📦 to PyPI
+    if: startsWith(github.ref, 'refs/tags/')  # only publish to PyPI on tag pushes
+    needs:
+    - test-pypi-package
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+      url: https://pypi.org/p/changedetection-osint-processor
+    permissions:
+      id-token: write  # IMPORTANT: mandatory for trusted publishing
+
+    steps:
+    - name: Download all the dists
+      uses: actions/download-artifact@v7
+      with:
+        name: python-package-distributions
+        path: dist/
+    - name: Publish distribution 📦 to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
