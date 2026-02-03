@@ -1,5 +1,5 @@
 """
-Pluggy plugin implementation for OSINT Reconnaissance Processor.
+OSINT Reconnaissance Processor, get changes of DNS, routing, SSL expiring and more.
 
 This module implements the changedetectionio plugin interface to register
 the OSINT processor with the main application.
