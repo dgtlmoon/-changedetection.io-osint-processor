@@ -90,7 +90,7 @@ class processor_settings_form(processor_text_json_diff_form):
         _l('WHOIS Expiration Warning (days)'),
         validators=[
             validators.Optional(),
-            validators.NumberRange(min=0, max=365, message=_l('Must be between 0 and 365 days'))
+            validators.NumberRange(min=0, max=10000)
         ],
         default=3
     )
