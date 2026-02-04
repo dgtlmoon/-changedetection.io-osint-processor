@@ -2,6 +2,8 @@
 
 > **Comprehensive network intelligence and security monitoring leveraging changedetection.io**
 
+> **This is a processor agent plugin for [changedetection.io](https://github.com/dgtlmoon/changedetection.io) change detection and notification dashboard.**
+
 **Monitor your infrastructure for unexpected changes.** Detect unauthorized modifications to SSL/TLS certificates, DNS records, BGP routing, open ports, WHOIS registration details, HTTP security headers, and TLS cipher configurations. Perfect for security teams, DevOps engineers, SRE teams, and OSINT practitioners who need continuous visibility into their infrastructure's security posture. Get instant notifications when certificates are about to expire, DNS records change, new vulnerabilities appear, or network paths are rerouted—before they become security incidents or outages.
 
 Use the existing text filters built into [changedetection.io](https://github.com/dgtlmoon/changedetection.io) to trim out information you don't need and keep only what's relevant to you. Easily connect change alerts to Discord, Slack, email, and 90+ other notification backends, leveraging the awesomeness of changedetection.io's powerful notification system.
