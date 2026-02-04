@@ -10,7 +10,7 @@ traceroute, and BGP/ASN information.
 from setuptools import setup, find_packages
 
 setup(
-    name='changedetection-osint-processor',
+    name='changedetection.io-osint-processor',
     version='0.0.2',
     description='OSINT Reconnaissance Processor for changedetection.io with Email Security, DNSSEC, SSH & SMTP',
     long_description=open('README.md').read(),
