@@ -6,6 +6,12 @@
 
 Use the existing text filters built into [changedetection.io](https://github.com/dgtlmoon/changedetection.io) to trim out information you don't need and keep only what's relevant to you. Easily connect change alerts to Discord, Slack, email, and 90+ other notification backends, leveraging the awesomeness of changedetection.io's powerful notification system.
 
+<img src="docs/osint-use.png" style="max-width: 500px;" alt="Prepare to check DNS EMAIL WHOIS for changes and get alerts" title="Prepare to check DNS EMAIL WHOIS for changes and get alerts" >
+
+1. Create a watch with URL: `https://example.com`
+2. Select processor: **OSINT Reconnaissance**
+
+
 ## ✨ Features
 
 **Network Intelligence**
@@ -123,7 +129,7 @@ The `h` in `socks5h://` forces hostname resolution through the SOCKS5 proxy, pre
 **⚠️ Important**: Only SOCKS5 proxies are supported. HTTP/HTTPS proxies will be rejected with an error message.
 
 ## 🚀 Quick Start
-<img src="docs/osint-use.png" style="max-width: 500px;">
+<img src="docs/osint-use.png" style="max-width: 500px;" alt="Prepare to check DNS EMAIL WHOIS for changes and get alerts" title="Prepare to check DNS EMAIL WHOIS for changes and get alerts" >
 
 1. Create a watch with URL: `https://example.com`
 2. Select processor: **OSINT Reconnaissance**
