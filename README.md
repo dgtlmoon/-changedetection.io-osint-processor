@@ -11,6 +11,11 @@ Use the existing text filters built into [changedetection.io](https://github.com
 1. Create a watch with URL: `https://example.com`
 2. Select processor: **OSINT Reconnaissance**
 
+Then see your full OSINT report as a text change which can be easily connected to Discord, email, ntfy, matrix, ms-teams, slack and 90+ other notifications.
+
+<img src="docs/osint-example-difference.png" style="max-width: 500px;" alt="Difference detected to IP address, routers, DNS etc"  title="Difference detected to IP address, routers, DNS etc">
+
+
 
 ## ✨ Features
 
