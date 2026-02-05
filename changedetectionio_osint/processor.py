@@ -184,8 +184,35 @@ class perform_site_check(text_json_diff_processor):
                     try:
                         answers = dns_resolver.resolve(hostname, 'AAAA')
                         ip_address = str(answers[0])
-                    except:
-                        raise ValueError(f"Could not resolve hostname: {hostname}")
+                    except Exception as dns_error:
+                        # DNS resolution failed - return error as output text instead of throwing
+                        error_output = (
+                            f"Target: {url}\n"
+                            f"Hostname: {hostname}\n"
+                            f"\n"
+                            f"⚠ ERROR: Could not resolve hostname: {hostname}\n"
+                            f"DNS Server: {dns_server}\n"
+                            f"Error details: {str(dns_error)}\n"
+                        )
+
+                        # Set the error content in our fetcher
+                        self.fetcher.content = error_output
+
+                        # Set some basic headers
+                        if not hasattr(self.fetcher, 'headers') or self.fetcher.headers is None or not isinstance(self.fetcher.headers, dict):
+                            self.fetcher.headers = CaseInsensitiveDict()
+                        elif not isinstance(self.fetcher.headers, CaseInsensitiveDict):
+                            self.fetcher.headers = CaseInsensitiveDict(self.fetcher.headers)
+
+                        self.fetcher.headers['content-type'] = 'text/plain; charset=utf-8'
+
+                        # Mark as successful fetch (with error content)
+                        if not hasattr(self.fetcher, 'status_code') or self.fetcher.status_code is None:
+                            self.fetcher.status_code = 200
+
+                        logger.warning(f"Could not resolve hostname {hostname}: {str(dns_error)}")
+                        update_signal.send(watch_uuid=watch_uuid, status="DNS resolution failed")
+                        return  # Exit early with error message in content
 
             logger.debug(f"Resolved {hostname} to {ip_address}")
 

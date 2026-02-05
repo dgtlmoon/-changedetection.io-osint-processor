@@ -11,7 +11,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='changedetection.io-osint-processor',
-    version='0.0.2',
+    version='0.0.3',
     description='OSINT Reconnaissance Processor for changedetection.io with Email Security, DNSSEC, SSH & SMTP',
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',
